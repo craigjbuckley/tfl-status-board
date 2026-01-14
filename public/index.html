@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TfL Status Board</title>
+
+  <style>
+    :root {
+      --row-font: 30px;
+      --row-padding: 18px;
+    }
+
+    body {
+      margin: 0;
+      background: black;
+      color: white;
+      font-family: "Johnston100", "JohnstonITC", Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    .container {
+      display: grid;
+      gap: 24px;
+      padding: 30px;
+      box-sizing: border-box;
+    }
+
+    @media (orientation: portrait) {
+      .container { grid-template-columns: 1fr; }
+    }
+
+    @media (orientation: landscape) {
+      .container { grid-template-columns: 1fr 1fr; }
+    }
+
+    .table { width: 100%; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      padding: var(--row-padding) 24px;
+      font-size: var(--row-font);
+      align-items: center;
+    }
+
+    .line { font-weight: 600; }
+    .status { text-align: right; }
+  </style>
+</head>
+
+<body>
+  <div id="container" class="container"></div>
+
+  <script>
+    function clamp(v, min, max) { return Math.max(min, Math.min(v, max)); }
+
+    function applyAutoScale() {
+      const scale = window.innerHeight / 1080;
+      document.documentElement.style.setProperty(
+        "--row-font", `${clamp(30 * scale, 18, 52)}px`
+      );
+      document.documentElement.style.setProperty(
+        "--row-padding", `${clamp(18 * scale, 10, 30)}px`
+      );
+    }
+
+    applyAutoScale();
+    window.addEventListener("resize", applyAutoScale);
+
+    const lineColours = {
+      "Bakerloo": "#B36305",
+      "Central": "#E32017",
+      "Circle": "#FFD300",
+      "District": "#00782A",
+      "Hammersmith & City": "#F3A9BB",
+      "Jubilee": "#A0A5A9",
+      "Metropolitan": "#9B0056",
+      "Northern": "#000000",
+      "Piccadilly": "#003688",
+      "Victoria": "#0098D4",
+      "Waterloo & City": "#76D0BD",
+      "Elizabeth line": "#6950A1",
+      "London Overground": "#EE7C0E",
+      "Weaver line": "#00B2A9",
+      "Mildmay line": "#0076A8",
+      "Windrush line": "#E24E42",
+      "Suffragette line": "#5A2D81",
+      "Lioness line": "#F4A300",
+      "Liberty line": "#6E6E6E"
+    };
+
+    let overgroundLines = [];
+    let overgroundIndex = 0;
+
+    function isLandscape() {
+      return window.matchMedia("(orientation: landscape)").matches;
+    }
+
+    function render(rows) {
+      const container = document.getElementById("container");
+      container.innerHTML = "";
+
+      const cols = isLandscape() ? 2 : 1;
+      const tables = Array.from({ length: cols }, () => []);
+
+      rows.forEach((r, i) => tables[i % cols].push(r));
+
+      tables.forEach(col => {
+        const table = document.createElement("div");
+        table.className = "table";
+
+        col.forEach(r => {
+          const row = document.createElement("div");
+          row.className = "row";
+          if (r.type === "overground") row.id = "overground-row";
+          row.style.background = r.colour || "#333";
+
+          row.innerHTML = `
+            <div class="line">${r.name}</div>
+            <div class="status">${r.status}</div>
+          `;
+          table.appendChild(row);
+        });
+
+        container.appendChild(table);
+      });
+    }
+
+    function updateOvergroundRow() {
+      if (!overgroundLines.length) return;
+
+      const line = overgroundLines[overgroundIndex];
+      const row = document.getElementById("overground-row");
+      if (!row) return;
+
+      row.style.background = lineColours[line.name] || lineColours["London Overground"];
+      row.querySelector(".line").textContent =
+        (line.name || "").replace(" line", "");
+      row.querySelector(".status").textContent =
+        line.lineStatuses?.[0]?.statusSeverityDescription || "Unknown";
+
+      overgroundIndex = (overgroundIndex + 1) % overgroundLines.length;
+    }
+
+    async function loadStatus() {
+      const res = await fetch("/api/rail-status", { cache: "no-store" });
+      const lines = await res.json();
+
+      const tube = lines.filter(l => l.modeName === "tube").sort((a,b)=>a.name.localeCompare(b.name));
+      const elizabeth = lines.find(l => l.modeName === "elizabeth-line");
+      overgroundLines = lines.filter(l => l.modeName === "overground");
+
+      const rows = [];
+
+      tube.forEach(l => rows.push({
+        name: l.name,
+        status: l.lineStatuses?.[0]?.statusSeverityDescription || "Unknown",
+        colour: lineColours[l.name],
+        type: "fixed"
+      }));
+
+      if (elizabeth) rows.push({
+        name: "Elizabeth line",
+        status: elizabeth.lineStatuses?.[0]?.statusSeverityDescription || "Unknown",
+        colour: lineColours["Elizabeth line"],
+        type: "fixed"
+      });
+
+      if (overgroundLines.length) rows.push({
+        name: "Mildmay",
+        status: "Loading…",
+        colour: lineColours["London Overground"],
+        type: "overground"
+      });
+
+      render(rows);
+      updateOvergroundRow();
+    }
+
+    setInterval(updateOvergroundRow, 3000);
+    setInterval(loadStatus, 60000);
+    loadStatus();
+  </script>
+</body>
+</html>
