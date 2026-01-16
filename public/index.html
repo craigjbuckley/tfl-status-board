@@ -42,10 +42,23 @@
       padding: var(--row-padding) 24px;
       font-size: var(--row-font);
       align-items: center;
+      box-sizing: border-box;
     }
 
-    .line { font-weight: 600; }
-    .status { text-align: right; }
+    .line {
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-right: 12px;
+    }
+
+    .status {
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   </style>
 </head>
 
@@ -53,22 +66,25 @@
   <div id="container" class="container"></div>
 
   <script>
-    function clamp(v, min, max) { return Math.max(min, Math.min(v, max)); }
-
-    function applyAutoScale() {
-      const scale = window.innerHeight / 1080;
-      document.documentElement.style.setProperty(
-        "--row-font", `${clamp(30 * scale, 18, 52)}px`
-      );
-      document.documentElement.style.setProperty(
-        "--row-padding", `${clamp(18 * scale, 10, 30)}px`
-      );
+    // ---------- scaling ----------
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(v, max));
     }
 
-    applyAutoScale();
-    window.addEventListener("resize", applyAutoScale);
+    function applyAutoScale() {
+      var scale = (window.innerHeight || 1080) / 1080;
+      var root = document.documentElement;
+      root.style.setProperty("--row-font", String(clamp(30 * scale, 18, 52)) + "px");
+      root.style.setProperty("--row-padding", String(clamp(18 * scale, 10, 30)) + "px");
+    }
 
-    const lineColours = {
+    if (window.addEventListener) {
+      window.addEventListener("resize", applyAutoScale);
+    }
+    applyAutoScale();
+
+    // ---------- colours ----------
+    var lineColours = {
       "Bakerloo": "#B36305",
       "Central": "#E32017",
       "Circle": "#FFD300",
@@ -90,96 +106,198 @@
       "Liberty line": "#6E6E6E"
     };
 
-    let overgroundLines = [];
-    let overgroundIndex = 0;
+    // ---------- state ----------
+    var overgroundLines = [];
+    var overgroundIndex = 0;
 
     function isLandscape() {
-      return window.matchMedia("(orientation: landscape)").matches;
+      try {
+        return window.matchMedia && window.matchMedia("(orientation: landscape)").matches;
+      } catch (e) {
+        return (window.innerWidth || 1920) > (window.innerHeight || 1080);
+      }
+    }
+
+    function safeGetStatus(lineObj) {
+      // avoids optional chaining
+      if (!lineObj) return "Unknown";
+      if (!lineObj.lineStatuses) return "Unknown";
+      if (!lineObj.lineStatuses[0]) return "Unknown";
+      return lineObj.lineStatuses[0].statusSeverityDescription || "Unknown";
+    }
+
+    function clearContainer() {
+      var container = document.getElementById("container");
+      while (container.firstChild) container.removeChild(container.firstChild);
+    }
+
+    function createRow(id, name, status, bg) {
+      var row = document.createElement("div");
+      row.className = "row";
+      if (id) row.id = id;
+      row.style.background = bg || "#333";
+
+      var left = document.createElement("div");
+      left.className = "line";
+      left.appendChild(document.createTextNode(name));
+
+      var right = document.createElement("div");
+      right.className = "status";
+      right.appendChild(document.createTextNode(status));
+
+      row.appendChild(left);
+      row.appendChild(right);
+      return row;
     }
 
     function render(rows) {
-      const container = document.getElementById("container");
-      container.innerHTML = "";
+      clearContainer();
+      var container = document.getElementById("container");
 
-      const cols = isLandscape() ? 2 : 1;
-      const tables = Array.from({ length: cols }, () => []);
+      var cols = isLandscape() ? 2 : 1;
+      var tables = [];
+      var i;
 
-      rows.forEach((r, i) => tables[i % cols].push(r));
+      for (i = 0; i < cols; i++) tables.push([]);
 
-      tables.forEach(col => {
-        const table = document.createElement("div");
+      for (i = 0; i < rows.length; i++) {
+        tables[i % cols].push(rows[i]);
+      }
+
+      for (i = 0; i < tables.length; i++) {
+        var table = document.createElement("div");
         table.className = "table";
 
-        col.forEach(r => {
-          const row = document.createElement("div");
-          row.className = "row";
-          if (r.type === "overground") row.id = "overground-row";
-          row.style.background = r.colour || "#333";
-
-          row.innerHTML = `
-            <div class="line">${r.name}</div>
-            <div class="status">${r.status}</div>
-          `;
-          table.appendChild(row);
-        });
-
+        var j;
+        for (j = 0; j < tables[i].length; j++) {
+          table.appendChild(tables[i][j]);
+        }
         container.appendChild(table);
-      });
+      }
     }
 
     function updateOvergroundRow() {
-      if (!overgroundLines.length) return;
+      if (!overgroundLines || overgroundLines.length === 0) return;
 
-      const line = overgroundLines[overgroundIndex];
-      const row = document.getElementById("overground-row");
+      var line = overgroundLines[overgroundIndex];
+      var row = document.getElementById("overground-row");
       if (!row) return;
 
-      row.style.background = lineColours[line.name] || lineColours["London Overground"];
-      row.querySelector(".line").textContent =
-        (line.name || "").replace(" line", "");
-      row.querySelector(".status").textContent =
-        line.lineStatuses?.[0]?.statusSeverityDescription || "Unknown";
+      var bg = lineColours[line.name] || lineColours["London Overground"] || "#333";
+      var displayName = (line.name || "Overground").replace(" line", "");
+      var status = safeGetStatus(line);
+
+      row.style.background = bg;
+
+      // update left/right cells safely
+      var left = row.getElementsByClassName("line")[0];
+      var right = row.getElementsByClassName("status")[0];
+      if (left) left.textContent = displayName;
+      if (right) right.textContent = status;
 
       overgroundIndex = (overgroundIndex + 1) % overgroundLines.length;
     }
 
-    async function loadStatus() {
-      const res = await fetch("/api/rail-status", { cache: "no-store" });
-      const lines = await res.json();
-
-      const tube = lines.filter(l => l.modeName === "tube").sort((a,b)=>a.name.localeCompare(b.name));
-      const elizabeth = lines.find(l => l.modeName === "elizabeth-line");
-      overgroundLines = lines.filter(l => l.modeName === "overground");
-
-      const rows = [];
-
-      tube.forEach(l => rows.push({
-        name: l.name,
-        status: l.lineStatuses?.[0]?.statusSeverityDescription || "Unknown",
-        colour: lineColours[l.name],
-        type: "fixed"
-      }));
-
-      if (elizabeth) rows.push({
-        name: "Elizabeth line",
-        status: elizabeth.lineStatuses?.[0]?.statusSeverityDescription || "Unknown",
-        colour: lineColours["Elizabeth line"],
-        type: "fixed"
-      });
-
-      if (overgroundLines.length) rows.push({
-        name: "Mildmay",
-        status: "Loading…",
-        colour: lineColours["London Overground"],
-        type: "overground"
-      });
-
-      render(rows);
-      updateOvergroundRow();
+    function sortByName(a, b) {
+      var an = (a && a.name) ? a.name : "";
+      var bn = (b && b.name) ? b.name : "";
+      return an.localeCompare ? an.localeCompare(bn) : (an > bn ? 1 : (an < bn ? -1 : 0));
     }
 
+    function httpGetJson(url, onOk, onErr) {
+      // Use fetch if available, otherwise XHR
+      if (window.fetch) {
+        fetch(url, { cache: "no-store" })
+          .then(function (res) { return res.json(); })
+          .then(function (json) { onOk(json); })
+          .catch(function () { onErr(); });
+        return;
+      }
+
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState === 4) {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              onOk(JSON.parse(xhr.responseText));
+            } catch (e) {
+              onErr();
+            }
+          } else {
+            onErr();
+          }
+        }
+      };
+      xhr.send();
+    }
+
+    function loadStatus() {
+      httpGetJson("/api/rail-status",
+        function (lines) {
+          // split services
+          var tube = [];
+          var elizabeth = null;
+          overgroundLines = [];
+
+          var i;
+          for (i = 0; i < lines.length; i++) {
+            var l = lines[i];
+            if (!l) continue;
+            if (l.modeName === "tube") tube.push(l);
+            else if (l.modeName === "elizabeth-line") elizabeth = l;
+            else if (l.modeName === "overground") overgroundLines.push(l);
+          }
+
+          tube.sort(sortByName);
+          overgroundLines.sort(sortByName);
+
+          var rows = [];
+          for (i = 0; i < tube.length; i++) {
+            var t = tube[i];
+            rows.push(createRow(
+              null,
+              t.name,
+              safeGetStatus(t),
+              lineColours[t.name] || "#333"
+            ));
+          }
+
+          if (elizabeth) {
+            rows.push(createRow(
+              null,
+              "Elizabeth line",
+              safeGetStatus(elizabeth),
+              lineColours["Elizabeth line"] || "#333"
+            ));
+          }
+
+          if (overgroundLines.length) {
+            // placeholder row; will rotate names/status
+            rows.push(createRow(
+              "overground-row",
+              "Overground",
+              "Loading…",
+              lineColours["London Overground"] || "#333"
+            ));
+            overgroundIndex = 0;
+          }
+
+          render(rows);
+          updateOvergroundRow();
+        },
+        function () {
+          // fail safe
+          var rows = [createRow(null, "TfL Status", "Data unavailable", "#333")];
+          render(rows);
+        }
+      );
+    }
+
+    // rotate + refresh
     setInterval(updateOvergroundRow, 3000);
     setInterval(loadStatus, 60000);
+
     loadStatus();
   </script>
 </body>
